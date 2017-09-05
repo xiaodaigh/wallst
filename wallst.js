@@ -1,4 +1,4 @@
-const { Navalia, Chrome } = require('navalia');
+const { Navalia, Chrome } = require('navalia'); // https://joelgriffith.github.io/navalia/
 var cheerio = require('cheerio');
 const navalia = new Navalia({
 	numInstances: 4,// number of cpu cores
@@ -7,6 +7,7 @@ const navalia = new Navalia({
 	}
 });
 
+// a function that returns a function that be used with navalia.run() to scrape morningstar
 scrape_ms = (ticker) => {
 	return (chrome)	=> {
 		return chrome.
@@ -37,12 +38,12 @@ scrape_ms = (ticker) => {
 	}
 }
 
-//these can run in "paralle"
+//these can run in "parallel"
 var a1 = navalia.run(scrape_ms("XASX:ISO")).then(result => console.log(result))
 var a2 = navalia.run(scrape_ms("XASX:STW")).then(result => console.log(result))
 
-// navalia.run((chrome) => chrome.goto('http://portfolios.morningstar.com/fund/holdings?t=XASX:STW').html(".r_title .gry").then((result) => console.log(result)))
 
+// navalia.run((chrome) => chrome.goto('http://portfolios.morningstar.com/fund/holdings?t=XASX:STW').html(".r_title .gry").then((result) => console.log(result)))
 // var chrome = new Chrome({
 // 	chromeOptions: {
 // 		timeout: 60000
