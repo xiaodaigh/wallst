@@ -26,12 +26,18 @@ scrape_ms = (ticker) => {
         if (ticker_href !== undefined) {
           ticker_href = ticker_href.replace("\n", "").substr(-8)
         } else {
-        	ticker_href = ""
+          ticker_href = ""
         }
+
+        let company = $$('th a').text()
+        if (company === "") {
+          company = $$('th').text()
+        }
+
         return {
           etf_ticker: cheerio.load(chrome_result[1]).text().replace(" ", "").replace("\n", ""),
           ticker: ticker_href,
-          company: $$('th a').text(),
+          company: company,
           port_wt: parseFloat($td.eq(3).text()),
           shares_owned: parseInt($td.eq(4).text().replace(",", "")),
           sector: $td.eq(6).find("span").attr("title"),
@@ -52,34 +58,33 @@ const sqlite3 = require('sqlite3').verbose();
 // var db = new sqlite3.Database(':memory:'); // in memoery sqlite
 var db = new sqlite3.Database('./db/wallst.sqlite3');
 //these can run in "parallel"
-// db.run(`drop TABLE if exists etfs`);
-// db
+db.run(`drop TABLE if exists etfs`, () => {
+	db.run(`CREATE TABLE etfs(
+		etf_ticker text,
+		ticker text,
+		company text,
+		port_wt real,
+		shares_owned integer,
+		sector text,
+		style text,
+		first_bought text,
+		country text,
+		ytd_return real)`)
+})
 
-// db.run(`CREATE TABLE etfs(
-// etf_ticker text,
-// ticker text,
-// company text,
-// port_wt real,
-// shares_owned integer,
-// sector text,
-// style text,
-// first_bought text,
-// country text,
-// ytd_return real)`);
 
-
-var a2 = navalia.run(scrape_ms("XASX:STW")).then(result => {  
+const insertIntoSQLite = result => {
   result.forEach((res, i) => {
     // create the insertion code
     let insert_code = Object.keys(res).reduce((acc, cv) => {
       if (res[cv] === undefined) {
-      	return acc + `"", `
+        return acc + `"", `
       } else if (typeof res[cv] === "string") {
         return acc + `"${res[cv]}", `
       } else {
-      	if (isNaN(res[cv])) {
-      		return acc + `"", `
-      	}
+        if (isNaN(res[cv])) {
+          return acc + `"", `
+        }
         return acc + `${res[cv]}, `
       }
     }, "INSERT INTO etfs VALUES (")
@@ -90,33 +95,10 @@ var a2 = navalia.run(scrape_ms("XASX:STW")).then(result => {
   })
 
   return (result)
-})
+}
 
-
-
-db.run(`select * from etfs`)
-db.run(`INSERT INTO etfs VALUES (
-"${etf_ticker}",
-"${ticker }",
-"${company }",
-"${port_wt }",
-"${shares_owned }",
-"${sector }",
-"${style }",
-"${first_bought }",
-"${country }",
-"${ytd_return}"`)
-
-
-a2.then((a2) => console.log(a2.slice(1, 3)))
-
-var a1 = navalia.run(scrape_ms("XASX:ISO")).then(result => {
-  // console.log(result)
-  console.log("done")
-  return (result)
-})
-
-
+var a2 = navalia.run(scrape_ms("XASX:STW")).then(insertIntoSQLite)
+var a1 = navalia.run(scrape_ms("XASX:ISO")).then(insertIntoSQLite)
 
 // navalia.run((chrome) => chrome.goto('http://portfolios.morningstar.com/fund/holdings?t=XASX:STW').html(".r_title .gry").then((result) => console.log(result)))
 // var chrome = new Chrome({
