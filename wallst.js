@@ -1,21 +1,28 @@
+const cpu_cores = 4 // number of physical cpu cores not logical one because many cpus are hyperthreaded hence doubel the "usable" threads
+const length_of_ASX_ticker = 8;
+console.warn("best to replace with regex")
+
 const { Navalia, Chrome } = require('navalia'); // https://joelgriffith.github.io/navalia/
 const cheerio = require('cheerio');
 const navalia = new Navalia({
-  numInstances: 4, // number of cpu cores
+  numInstances: cpu_cores,
+  maxJobs:1,
   chromeOptions: {
-    timeout: 60000
+    timeout: 60000,
+
   }
 });
 
 // a function that returns a function that be used with navalia.run() to scrape morningstar
 scrape_ms = (ticker) => {
+  console.log("running: " + ticker)
   return (chrome) => {
     return chrome.
     goto('http://portfolios.morningstar.com/fund/holdings?t=' + ticker).
     html(".r_title .gry").
     html("#equity_holding_tab").
     then((chrome_result) => {
-      console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+      console.log("!!!!!!!!!!!!!!!!!gotsome results!!!!!!!!!!!!!!!!!!!")
       var $ = cheerio.load(chrome_result[2]);
       var tbl = $('tr:has(td):not(.hr)').map(function(i, v) {
         var $$ = cheerio.load(v);
@@ -24,7 +31,7 @@ scrape_ms = (ticker) => {
         //some of the rows are empty hence need to check if the link exists first
         let ticker_href = $td.eq(10).find("a").attr("href")
         if (ticker_href !== undefined) {
-          ticker_href = ticker_href.replace("\n", "").substr(-8)
+          ticker_href = ticker_href.replace("\n", "").substr(-length_of_ASX_ticker)
         } else {
           ticker_href = ""
         }
@@ -49,17 +56,19 @@ scrape_ms = (ticker) => {
       }).get()
       let l = tbl.length
       return tbl.slice(1, l)
+    }).catch(err => {
+    	console.log("error: " + ticker + " " + err)
     });
   }
 }
 
-// sqlite
+// create a sqlite database
 const sqlite3 = require('sqlite3').verbose();
 // var db = new sqlite3.Database(':memory:'); // in memoery sqlite
 var db = new sqlite3.Database('./db/wallst.sqlite3');
 //these can run in "parallel"
 db.run(`drop TABLE if exists etfs`, () => {
-	db.run(`CREATE TABLE etfs(
+  db.run(`CREATE TABLE etfs(
 		etf_ticker text,
 		ticker text,
 		company text,
@@ -72,8 +81,11 @@ db.run(`drop TABLE if exists etfs`, () => {
 		ytd_return real)`)
 })
 
-
+// a function to insert scraped data into sqlite
 const insertIntoSQLite = result => {
+  if(result === undefined) {
+  	return null
+  }
   result.forEach((res, i) => {
     // create the insertion code
     let insert_code = Object.keys(res).reduce((acc, cv) => {
@@ -90,83 +102,68 @@ const insertIntoSQLite = result => {
     }, "INSERT INTO etfs VALUES (")
 
     insert_code = insert_code.substr(0, insert_code.length - 2) + ")"
-    console.log(i + insert_code)
+    // console.log(i + insert_code)
     db.run(insert_code)
   })
 
   return (result)
 }
 
-var a2 = navalia.run(scrape_ms("XASX:STW")).then(insertIntoSQLite)
-var a1 = navalia.run(scrape_ms("XASX:ISO")).then(insertIntoSQLite)
+// some example code to consider breaking the sqlite into smaller database
+// and then merging them into one
+// this will allow for better parallel processing
+// attach 'c:\test\b.db3' as toMerge;           
+// BEGIN; 
+// insert into AuditRecords select * from toMerge.AuditRecords; 
+// COMMIT; 
+// detach toMerge;
 
-// navalia.run((chrome) => chrome.goto('http://portfolios.morningstar.com/fund/holdings?t=XASX:STW').html(".r_title .gry").then((result) => console.log(result)))
-// var chrome = new Chrome({
-// 	chromeOptions: {
-// 		timeout: 60000
-// 	}
-// })
-// var aa = ""
-// var a = chrome.
-// 	goto('http://portfolios.morningstar.com/fund/holdings?t=XASX:STW').
-// 	html(".r_title .gry").
-// 	html("#equity_holding_tab").
-// 	then((result) => {
-// 			console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-// 			// console.log(result);
-// 			var $ = cheerio.load(result[2]);
-// 			var tbl = $('tr:has(td):not(.hr)').map(function(i, v) {				
-// 				var $$ = cheerio.load(v);
-// 				var $td = $$('td')
-// 				return {
-// 					company:$td.eq(1).text(),
-// 					port_wt:$td.eq(3).text(),
-// 					shares_owned:$td.eq(4).text(),
-// 					sector:$td.eq(6).innerHTML,
-// 					style:$td.eq(7).text(),
-// 					first_bought:$td.eq(9).text(),
-// 					country:$td.eq(11).text(),
-// 					ytd_return:$td.eq(12).text(),
-// 				}
-// 			 }).get()
 
-// 			return tbl
-// 		});
-// var express = require('express');
-// var fs = require('fs');
-// var request = require('request');
-// var cheerio = require('cheerio');
-// var app     = express();
+// define an async parallel queue with concurrency limited to number of cpu cores to throttle tasks
+const async = require("async")
+var pqueue = async.queue((t, callback) => {
+  console.log(t)
 
-// // scrapeIt("http://portfolios.morningstar.com/fund/holdings?t=XASX:STW", {
+  let ss = t.split(":")
+  if (ss[0] === "ASX") {
+    navalia.run(scrape_ms("XASX:" + ss[1])).then((res) => {
+    	callback(null,insertIntoSQLite(res))
+    }).catch((err) => {
+    	console.log("error: " + ss + err)
+    	callbakc(err)
+    })
+  } else if (ss[0] === "LSE") {
+    navalia.run(scrape_ms(ss[1])).then((res) => {
+    	callback(null,insertIntoSQLite(res))
+    }).catch((err) => {
+    	console.log("error: " + ss + err)
+    	callbakc(err)
+    })
+  } else if (ss[0] === "ARCA") {
+    callback(null)
+  } else if (ss[0] === "") {
+    callback(null)
+  }  
+}, cpu_cores)
 
-// // }).then(page => {
-// //     console.log(page);
-// // });
 
-// app.get('/scrape', function(req, res){
+//read the csv line by line and push into the async queue for processing
+const csv = require('csv-parser')
+const fs = require('fs')
 
-//   url = "http://portfolios.morningstar.com/fund/holdings?t=XASX:STW"
+var a = fs.createReadStream('./db/etf_list.csv').
+pipe(csv()).
+on('data', function(data) {
+  // console.log(data.uniqueSymbol)
+  pqueue.push(data.uniqueSymbol)
+})//.on('end', () => {
+  // console.log(tickers.length)
+  // async.mapLimit(tickers, 4, (t) => console.log(t), function(err, res) {
 
-//   request(url, function(error, response, html){
-
-//         // First we'll check to make sure no errors occurred when making the request
-//         console.log("wassup")
-//         if(!error){
-//             // Next, we'll utilize the cheerio library on the returned html which will essentially give us jQuery functionality
-
-//             var $ = cheerio.load(html);
-
-//             // Finally, we'll define the variables we're going to capture
-//             console.log($(".r_title .gry"))
-//             console.log($("#equity_holding_tab"))
-//         }
-//     })
-
-// })
-
-// app.listen('8081')
-
-// console.log('Magic happens on port 8081');
-
-// // exports = module.exports = app;
+  // })
+  // tickers.forEach((t) => {
+  // 	conso
+  // 	pqueue.push(t)
+  // 	console.log(pqueue.started)
+  // })
+//})
